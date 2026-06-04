@@ -1,4 +1,4 @@
-//package org.hoyo.translator;
+//package org.hoyo.translator.debug;
 //
 //import org.springframework.boot.CommandLineRunner;
 //import org.springframework.stereotype.Component;
