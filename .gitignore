@@ -5,6 +5,8 @@ build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 
+src/main/resources/textMaps/.sync_metadata.json
+src/main/resources/assets/.asset_metadata.json
 ### STS ###
 .apt_generated
 .classpath
@@ -39,3 +41,11 @@ out/
 /src/main/resources/application.properties
 /scripts/.venv/
 src/main/resources/application.properties
+/src/main/resources/textMaps/
+/src/main/resources/assets/
+src/main/resources/assets/hsr.json
+src/main/resources/assets/relics.json
+src/main/resources/assets/ItemConfigRelic.json
+src/main/resources/textMaps/TextMapEN.json
+/src/main/resources
+src/main/resources/assets/hsr.json

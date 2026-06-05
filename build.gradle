@@ -44,3 +44,26 @@ dependencyManagement {
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+//THIS BE THE PART THAT DOWNLOADS THE FILES
+
+def pythonCommand = System.getProperty('os.name')
+        .toLowerCase()
+        .contains('windows') ? 'py' : 'python3'
+
+tasks.register('syncTextMaps', Exec) {
+    commandLine pythonCommand, 'scripts/sync_files.py'
+
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
+tasks.register('syncAssets', Exec) {
+    commandLine pythonCommand, 'scripts/sync_assets.py'
+
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
+processResources.dependsOn(syncTextMaps)
+processResources.dependsOn(syncAssets)
