@@ -1,5 +1,6 @@
 package org.hoyo.translator;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
@@ -78,8 +79,15 @@ public class RedisDataLoaderService {
         }
 
         // Process each file universally
+        Map<String, String> textMapHashes = loadTextMapMetadata();
+
         for (FileConfig config : filesToLoad) {
-            loadUniversalJsonToRedis(config);
+
+            if (config.filePath().startsWith("textMaps/")) {
+                processTextMapIfChanged(config, textMapHashes);
+            } else {
+                loadUniversalJsonToRedis(config);
+            }
         }
 
         log.info("Redis data import check complete.");
@@ -134,6 +142,20 @@ public class RedisDataLoaderService {
         }
     }
 
+    private Map<String, String> loadTextMapMetadata() {
+        try {
+            ClassPathResource resource =
+                    new ClassPathResource("textMaps/.sync_metadata.json");
+
+            return objectMapper.readValue(
+                    resource.getInputStream(),
+                    new TypeReference<>() {}
+            );
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load TextMap metadata", e);
+        }
+    }
+
     //This be a recursive function that goes to the end and finds stuff
     private void flattenAndSaveToRedis(JsonNode node, String currentPath, int[] count) {
         if (node.isObject()) {
@@ -162,6 +184,56 @@ public class RedisDataLoaderService {
         try (InputStream inputStream = new ClassPathResource(filePath).getInputStream()) {
             byte[] hashBytes = digest.digest(inputStream.readAllBytes());
             return HexFormat.of().formatHex(hashBytes);
+        }
+    }
+
+    private void processTextMapIfChanged(
+            FileConfig config,
+            Map<String, String> textMapHashes
+    ) {
+
+        try {
+
+            String fileName = Paths.get(config.filePath())
+                    .getFileName()
+                    .toString();
+
+            String currentHash = textMapHashes.get(fileName);
+
+            if (currentHash == null) {
+                log.warn("No metadata hash found for {}", fileName);
+                return;
+            }
+
+            String redisHash = redisTemplate.opsForHash().get(
+                    "textmap:versions",
+                    fileName
+            ) instanceof String hash ? hash : null;
+
+            if (currentHash.equals(redisHash)) {
+                log.info("Skipping [{}]: already loaded.", fileName);
+                return;
+            }
+
+            log.info("Loading [{}]...", fileName);
+
+            loadUniversalJsonToRedis(config);
+
+            redisTemplate.opsForHash().put(
+                    "textmap:versions",
+                    fileName,
+                    currentHash
+            );
+
+            log.info("Successfully updated version hash for [{}]", fileName);
+
+        } catch (Exception e) {
+            log.error(
+                    "Failed to process TextMap {}: {}",
+                    config.filePath(),
+                    e.getMessage(),
+                    e
+            );
         }
     }
 }
