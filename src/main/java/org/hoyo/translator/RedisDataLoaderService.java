@@ -9,12 +9,14 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.MessageDigest;
-import java.util.HexFormat;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Stream;
 
 @Service
 public class RedisDataLoaderService {
@@ -39,23 +41,52 @@ public class RedisDataLoaderService {
         log.info("Starting Redis data import check...");
 
         // Define all files to load here
-        List<FileConfig> filesToLoad = List.of(
-                new FileConfig("textMaps/TextMapEN.json", "textMapEN", null),
+        List<FileConfig> filesToLoad = new ArrayList<>(List.of(
                 new FileConfig("assets/hsr.json", "hsr", null),
                 new FileConfig("assets/relics.json", "relics", null),
                 new FileConfig("assets/ItemConfigRelic.json", "relic_config", "ID")
-        );
+        ));
+
+        try (Stream<Path> stream = Files.list(Paths.get("src/main/resources/textMaps"))) {
+
+            stream.filter(Files::isRegularFile)
+                    .map(Path::getFileName)
+                    .map(Path::toString)
+                    .filter(name -> name.endsWith(".json"))
+                    .filter(name -> !name.startsWith(".")) // skips .sync_metadata.json
+                    .forEach(fileName -> {
+
+                        String configName = fileName
+                                .replace(".json", "")
+                                .replaceAll("_[0-9]+$", "")
+                                .replaceAll("[0-9]+$", "");
+
+                        configName = Character.toLowerCase(configName.charAt(0))
+                                + configName.substring(1);
+
+                        filesToLoad.add(
+                                new FileConfig(
+                                        "textMaps/" + fileName,
+                                        configName,
+                                        null
+                                )
+                        );
+                    });
+        }
+        catch (IOException e) {
+            throw new RuntimeException(e);
+        }
 
         // Process each file universally
         for (FileConfig config : filesToLoad) {
-            processFileIfChanged(config);
+            loadUniversalJsonToRedis(config);
         }
 
         log.info("Redis data import check complete.");
     }
 
     /**
-     * Checks the file hash before running the loading logic.
+     * Checks the file hash before running the loading logic. [DEPRECATED BY AMIR]
      */
     private void processFileIfChanged(FileConfig config) {
         try {
@@ -66,7 +97,7 @@ public class RedisDataLoaderService {
             if (currentHash.equals(storedHash)) {
                 log.info("Skipping [{}]: File has not changed since last import.", config.filePath());
             } else {
-                log.info("Update detected for [{}]. Starting import...", config.filePath());
+                //log.info("Update detected for [{}]. Starting import...", config.filePath());
 
                 loadUniversalJsonToRedis(config);
 
@@ -124,7 +155,7 @@ public class RedisDataLoaderService {
     }
 
     /**
-     * Calculates the SHA-1 hash of a file in the classpath.
+     * Calculates the SHA-1 hash of a file in the classpath. [DEPRECATED BY AMIR]
      */
     private String calculateFileHash(String filePath) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-1");
