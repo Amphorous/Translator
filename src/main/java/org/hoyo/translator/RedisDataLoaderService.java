@@ -80,42 +80,37 @@ public class RedisDataLoaderService {
 
         // Process each file universally
         Map<String, String> textMapHashes = loadTextMapMetadata();
+        Map<String, String> assetHashes = loadAssetMetadata();
 
         for (FileConfig config : filesToLoad) {
 
+            String fileName = Paths.get(config.filePath())
+                    .getFileName()
+                    .toString();
+
             if (config.filePath().startsWith("textMaps/")) {
-                processTextMapIfChanged(config, textMapHashes);
+
+                processFileIfChanged(
+                        config,
+                        fileName,
+                        textMapHashes.get(fileName),
+                        "textmap:versions"
+                );
+
             } else {
-                loadUniversalJsonToRedis(config);
+
+                processFileIfChanged(
+                        config,
+                        fileName,
+                        assetHashes.get(fileName),
+                        "asset:versions"
+                );
             }
         }
 
         log.info("Redis data import check complete.");
     }
 
-    /**
-     * Checks the file hash before running the loading logic. [DEPRECATED BY AMIR]
-     */
-    private void processFileIfChanged(FileConfig config) {
-        try {
-            String currentHash = calculateFileHash(config.filePath());
-            String hashRedisKey = "system:file_version:" + config.filePath();
-            String storedHash = redisTemplate.opsForValue().get(hashRedisKey);
-
-            if (currentHash.equals(storedHash)) {
-                log.info("Skipping [{}]: File has not changed since last import.", config.filePath());
-            } else {
-                //log.info("Update detected for [{}]. Starting import...", config.filePath());
-
-                loadUniversalJsonToRedis(config);
-
-                redisTemplate.opsForValue().set(hashRedisKey, currentHash);
-                log.info("Successfully updated version hash for [{}]", config.filePath());
-            }
-        } catch (Exception e) {
-            log.error("Failed to process hash check for {}: {}", config.filePath(), e.getMessage());
-        }
-    }
 
     private void loadUniversalJsonToRedis(FileConfig config) {
         try (InputStream inputStream = new ClassPathResource(config.filePath()).getInputStream()) {
@@ -156,6 +151,20 @@ public class RedisDataLoaderService {
         }
     }
 
+    private Map<String, String> loadAssetMetadata() {
+        try {
+            ClassPathResource resource =
+                    new ClassPathResource("assets/.asset_metadata.json");
+
+            return objectMapper.readValue(
+                    resource.getInputStream(),
+                    new TypeReference<>() {}
+            );
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load asset metadata", e);
+        }
+    }
+
     //This be a recursive function that goes to the end and finds stuff
     private void flattenAndSaveToRedis(JsonNode node, String currentPath, int[] count) {
         if (node.isObject()) {
@@ -176,62 +185,36 @@ public class RedisDataLoaderService {
         }
     }
 
-    /**
-     * Calculates the SHA-1 hash of a file in the classpath. [DEPRECATED BY AMIR]
-     */
-    private String calculateFileHash(String filePath) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-1");
-        try (InputStream inputStream = new ClassPathResource(filePath).getInputStream()) {
-            byte[] hashBytes = digest.digest(inputStream.readAllBytes());
-            return HexFormat.of().formatHex(hashBytes);
-        }
-    }
-
-    private void processTextMapIfChanged(
-            FileConfig config,
-            Map<String, String> textMapHashes
-    ) {
+    private void processFileIfChanged(FileConfig config, String fileName, String currentHash, String redisHashKey) {
 
         try {
 
-            String fileName = Paths.get(config.filePath())
-                    .getFileName()
-                    .toString();
-
-            String currentHash = textMapHashes.get(fileName);
-
-            if (currentHash == null) {
-                log.warn("No metadata hash found for {}", fileName);
-                return;
-            }
-
-            String redisHash = redisTemplate.opsForHash().get(
-                    "textmap:versions",
-                    fileName
-            ) instanceof String hash ? hash : null;
+            String redisHash = (String) redisTemplate
+                    .opsForHash()
+                    .get(redisHashKey, fileName);
 
             if (currentHash.equals(redisHash)) {
-                log.info("Skipping [{}]: already loaded.", fileName);
+                log.info("Skipping [{}]: already loaded", fileName);
                 return;
             }
-
-            log.info("Loading [{}]...", fileName);
 
             loadUniversalJsonToRedis(config);
 
             redisTemplate.opsForHash().put(
-                    "textmap:versions",
+                    redisHashKey,
                     fileName,
                     currentHash
             );
 
-            log.info("Successfully updated version hash for [{}]", fileName);
+            log.info(
+                    "Updated version for [{}]",
+                    fileName
+            );
 
         } catch (Exception e) {
             log.error(
-                    "Failed to process TextMap {}: {}",
-                    config.filePath(),
-                    e.getMessage(),
+                    "Failed processing {}",
+                    fileName,
                     e
             );
         }
