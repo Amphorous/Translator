@@ -47,9 +47,22 @@ tasks.named('test') {
 
 //THIS BE THE PART THAT DOWNLOADS THE FILES
 
-def pythonCommand = System.getProperty('os.name')
-        .toLowerCase()
-        .contains('windows') ? 'py' : 'python3'
+def isWindows = System.getProperty('os.name').toLowerCase().contains('windows')
+def pythonCommand
+if (isWindows) {
+    def venv1 = new File('scripts/.venv')
+    def venv2 = new File('scripts/venv')
+
+    if (venv1.exists()) {
+        pythonCommand = 'scripts\\.venv\\Scripts\\python'
+    } else if (venv2.exists()) {
+        pythonCommand = 'scripts\\venv\\Scripts\\python'
+    } else {
+        pythonCommand = 'py'
+    }
+} else {
+    pythonCommand = new File(projectDir, 'scripts/venv/bin/python3').absolutePath
+}
 
 tasks.register('syncTextMaps', Exec) {
     commandLine pythonCommand, 'scripts/sync_files.py'
