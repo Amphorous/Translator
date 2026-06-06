@@ -18,9 +18,11 @@ public class HonkaiTranslateService {
 
     public Map<String, String> translateRelicInfo(String language, String tid) {
 
-        // frontend sends only cn or tw
-        if(Objects.equals(language, "cn") || Objects.equals(language, "tw")) {
-            language = "zh-"+language;
+        // frontend sends ["en", "cn", "tw", "de", "es", "fr", "id", "jp", "kr", "pt", "ru", "th", "vi"]
+        // backend translates it to ["EN", "CHS", "CHT", "DE", "ES", "FR", "ID", "JP", "KR", "PT", "RU", "TH", "VI"]
+        switch (language) {
+            case "cn": language = "chs";
+            case "tw": language = "cht";
         }
 
         language = language.toUpperCase();
