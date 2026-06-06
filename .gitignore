@@ -49,3 +49,4 @@ src/main/resources/assets/ItemConfigRelic.json
 src/main/resources/textMaps/TextMapEN.json
 /src/main/resources
 src/main/resources/assets/hsr.json
+*.json
