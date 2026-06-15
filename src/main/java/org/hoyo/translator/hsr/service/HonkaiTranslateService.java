@@ -1,5 +1,7 @@
 package org.hoyo.translator.hsr.service;
 
+import org.hoyo.translator.loading.DataLoadingStatus;
+import org.hoyo.translator.loading.LoadingWarningUtil;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -11,9 +13,11 @@ import java.util.Objects;
 public class HonkaiTranslateService {
 
     private final StringRedisTemplate redisTemplate;
+    private final DataLoadingStatus loadingStatus;
 
-    public HonkaiTranslateService(StringRedisTemplate redisTemplate) {
+    public HonkaiTranslateService(StringRedisTemplate redisTemplate, DataLoadingStatus loadingStatus) {
         this.redisTemplate = redisTemplate;
+        this.loadingStatus = loadingStatus;
     }
 
     public Map<String, String> translateRelicInfo(String language, String tid) {
@@ -46,10 +50,12 @@ public class HonkaiTranslateService {
             setName = (String) redisTemplate.opsForValue().get("textMap"+language+":" + setHash);
         }
 
-        return Map.of(
+        Map<String, String> result = Map.of(
                 "ArtifactName", artifactName != null ? artifactName : "Translation Missing",
                 "SetName", setName != null ? setName : "Translation Missing"
         );
+
+        return LoadingWarningUtil.withLoadingWarning(result, loadingStatus);
         //input as TID (5 digit number),language(currently only EN), which is found in itemConfigRelic, find it go in itemName.Hash,
         // use that to get it from TextMapEN, output is artifact name and set name
         //to get setname, take the middle three numbers of TID, go to relics.set.TID.name gives a hash which again is located from TextMapEN

@@ -1,15 +1,11 @@
 package org.hoyo.translator.hsr;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.hoyo.translator.hsr.service.HonkaiTranslateService;
+import org.hoyo.translator.loading.DataPaths;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -23,7 +19,7 @@ import java.util.stream.Collectors;
 public class HSRController {
 
     private final HonkaiTranslateService honkaiTranslateService;
-    private final ObjectMapper objectMapper;
+    private final DataPaths dataPaths;
 
     @GetMapping("/relic-info/{language}/{tid}")
     public ResponseEntity<Map<String, String>> getRelicInfo(@PathVariable String language, @PathVariable String tid) {
@@ -35,12 +31,8 @@ public class HSRController {
     }
 
     @GetMapping("/localization/getlist")
-    public ResponseEntity<List<Map<String, Boolean>>> getLocalizationList() throws IOException {
-        Path metadataPath = Paths.get("src/main/resources/textMaps/.sync_metadata.json");
-        Map<String,String> metadata = objectMapper.readValue(
-                metadataPath.toFile(),
-                new TypeReference<>(){}
-        );
+    public ResponseEntity<List<Map<String, Boolean>>> getLocalizationList() {
+        Map<String, String> metadata = dataPaths.readTextMapMetadata();
 
         Set<String> languages = metadata.keySet()
                 .stream()
