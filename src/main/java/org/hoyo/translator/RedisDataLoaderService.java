@@ -1,12 +1,14 @@
 package org.hoyo.translator;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import org.hoyo.translator.loading.AssetFetchService;
+import org.hoyo.translator.loading.DataLoadingStatus;
+import org.hoyo.translator.loading.DataPaths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -14,8 +16,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.security.MessageDigest;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Stream;
 
@@ -26,10 +28,20 @@ public class RedisDataLoaderService {
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final DataLoadingStatus loadingStatus;
+    private final TaskExecutor dataLoaderExecutor;
+    private final DataPaths dataPaths;
+    private final AssetFetchService assetFetchService;
 
-    public RedisDataLoaderService(StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
+    public RedisDataLoaderService(StringRedisTemplate redisTemplate, ObjectMapper objectMapper,
+                                   DataLoadingStatus loadingStatus, TaskExecutor dataLoaderExecutor,
+                                   DataPaths dataPaths, AssetFetchService assetFetchService) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.loadingStatus = loadingStatus;
+        this.dataLoaderExecutor = dataLoaderExecutor;
+        this.dataPaths = dataPaths;
+        this.assetFetchService = assetFetchService;
     }
 
     /**
@@ -37,85 +49,123 @@ public class RedisDataLoaderService {
      */
     public record FileConfig(String filePath, String keyPrefix, String arrayIdField) {}
 
+    /**
+     * Kicks off the initial data load in the background so the application becomes
+     * available immediately instead of blocking startup for hours.
+     */
     @PostConstruct
-    public void initializeRedisData() {
-        log.info("Starting Redis data import check...");
+    public void scheduleInitialLoad() {
+        dataLoaderExecutor.execute(this::refreshData);
+    }
 
-        // Define all files to load here
-        List<FileConfig> filesToLoad = new ArrayList<>(List.of(
-                new FileConfig("assets/hsr.json", "hsr", null),
-                new FileConfig("assets/relics.json", "relics", null),
-                new FileConfig("assets/ItemConfigRelic.json", "relic_config", "ID")
-        ));
-
-        try (Stream<Path> stream = Files.list(Paths.get("src/main/resources/textMaps"))) {
-
-            stream.filter(Files::isRegularFile)
-                    .map(Path::getFileName)
-                    .map(Path::toString)
-                    .filter(name -> name.endsWith(".json"))
-                    .filter(name -> !name.startsWith(".")) // skips .sync_metadata.json
-                    .forEach(fileName -> {
-
-                        String configName = fileName
-                                .replace(".json", "")
-                                .replaceAll("_[0-9]+$", "")
-                                .replaceAll("[0-9]+$", "");
-
-                        configName = Character.toLowerCase(configName.charAt(0))
-                                + configName.substring(1);
-
-                        filesToLoad.add(
-                                new FileConfig(
-                                        "textMaps/" + fileName,
-                                        configName,
-                                        null
-                                )
-                        );
-                    });
-        }
-        catch (IOException e) {
-            throw new RuntimeException(e);
+    /**
+     * Checks all asset/TextMap files for changes and loads any that changed into Redis.
+     * Safe to call repeatedly (e.g. from a manual refresh endpoint or a scheduler) -
+     * if a load is already in progress, this call is a no-op.
+     */
+    public void refreshData() {
+        if (!loadingStatus.tryStart()) {
+            log.info("Redis data import already in progress, skipping this request.");
+            return;
         }
 
-        // Process each file universally
-        Map<String, String> textMapHashes = loadTextMapMetadata();
-        Map<String, String> assetHashes = loadAssetMetadata();
+        Instant overallStart = Instant.now();
+        try {
+            log.info("=== Starting Redis data import check ===");
 
-        for (FileConfig config : filesToLoad) {
+            log.info("Checking for fresh asset/TextMap files...");
+            assetFetchService.fetchLatest();
 
-            String fileName = Paths.get(config.filePath())
-                    .getFileName()
-                    .toString();
+            // Define all files to load here
+            List<FileConfig> filesToLoad = new ArrayList<>(List.of(
+                    new FileConfig("assets/hsr.json", "hsr", null),
+                    new FileConfig("assets/relics.json", "relics", null),
+                    new FileConfig("assets/ItemConfigRelic.json", "relic_config", "ID")
+            ));
 
-            if (config.filePath().startsWith("textMaps/")) {
+            try (Stream<Path> stream = Files.list(dataPaths.textMapsDir())) {
 
-                processFileIfChanged(
-                        config,
-                        fileName,
-                        textMapHashes.get(fileName),
-                        "textmap:versions"
-                );
+                stream.filter(Files::isRegularFile)
+                        .map(Path::getFileName)
+                        .map(Path::toString)
+                        .filter(name -> name.endsWith(".json"))
+                        .filter(name -> !name.startsWith(".")) // skips .sync_metadata.json
+                        .forEach(fileName -> {
 
-            } else {
+                            String configName = fileName
+                                    .replace(".json", "")
+                                    .replaceAll("_[0-9]+$", "")
+                                    .replaceAll("[0-9]+$", "");
 
-                processFileIfChanged(
-                        config,
-                        fileName,
-                        assetHashes.get(fileName),
-                        "asset:versions"
-                );
+                            configName = Character.toLowerCase(configName.charAt(0))
+                                    + configName.substring(1);
+
+                            filesToLoad.add(
+                                    new FileConfig(
+                                            "textMaps/" + fileName,
+                                            configName,
+                                            null
+                                    )
+                            );
+                        });
             }
-        }
+            catch (IOException e) {
+                throw new RuntimeException(e);
+            }
 
-        log.info("Redis data import check complete.");
+            // Process each file universally
+            Map<String, String> textMapHashes = dataPaths.readTextMapMetadata();
+            Map<String, String> assetHashes = dataPaths.readAssetMetadata();
+
+            log.info("Found {} files to check ({} TextMap files)", filesToLoad.size(), filesToLoad.size() - 3);
+
+            int fileIndex = 0;
+            for (FileConfig config : filesToLoad) {
+                fileIndex++;
+
+                String fileName = Path.of(config.filePath())
+                        .getFileName()
+                        .toString();
+
+                log.info("[{}/{}] Checking [{}]...", fileIndex, filesToLoad.size(), fileName);
+
+                if (config.filePath().startsWith("textMaps/")) {
+
+                    processFileIfChanged(
+                            config,
+                            fileName,
+                            textMapHashes.get(fileName),
+                            "textmap:versions"
+                    );
+
+                } else {
+
+                    processFileIfChanged(
+                            config,
+                            fileName,
+                            assetHashes.get(fileName),
+                            "asset:versions"
+                    );
+                }
+            }
+
+            Duration elapsed = Duration.between(overallStart, Instant.now());
+            log.info("=== Redis data import check complete (took {}) ===", formatDuration(elapsed));
+            loadingStatus.markFinished(true, null);
+        } catch (Exception e) {
+            log.error("Redis data import check failed", e);
+            loadingStatus.markFinished(false, e.getMessage());
+        }
     }
 
 
     private void loadUniversalJsonToRedis(FileConfig config) {
-        try (InputStream inputStream = new ClassPathResource(config.filePath()).getInputStream()) {
+        Path filePath = dataPaths.baseDir().resolve(config.filePath());
+        try (InputStream inputStream = Files.newInputStream(filePath)) {
             JsonNode rootNode = objectMapper.readTree(inputStream);
             int[] count = {0};
+            Instant start = Instant.now();
+            log.info("  Feeding [{}] into Redis (prefix=\"{}\")...", config.filePath(), config.keyPrefix());
             // This is if it's a JSON Array
             if (rootNode.isArray()) {
                 for (JsonNode itemNode : rootNode) {
@@ -124,64 +174,42 @@ public class RedisDataLoaderService {
                     if (config.arrayIdField() != null && itemNode.has(config.arrayIdField())) {
                         basePath += ":" + itemNode.get(config.arrayIdField()).asText();
                     }
-                    flattenAndSaveToRedis(itemNode, basePath, count);
+                    flattenAndSaveToRedis(itemNode, basePath, count, config.filePath(), start);
                 }
             }
             // If the file starts as a JSON Object like relics or TextMaps frfr
             else if (rootNode.isObject()) {
-                flattenAndSaveToRedis(rootNode, config.keyPrefix(), count);
+                flattenAndSaveToRedis(rootNode, config.keyPrefix(), count, config.filePath(), start);
             }
-            log.info("Successfully loaded {} entries from {}", count[0], config.filePath());
+            Duration elapsed = Duration.between(start, Instant.now());
+            log.info("  Finished feeding [{}]: {} entries written into Redis (took {})",
+                    config.filePath(), count[0], formatDuration(elapsed));
         } catch (Exception e) {
-            log.error("Failed to load data from {}: {}", config.filePath(), e.getMessage());
-        }
-    }
-
-    private Map<String, String> loadTextMapMetadata() {
-        try {
-            ClassPathResource resource =
-                    new ClassPathResource("textMaps/.sync_metadata.json");
-
-            return objectMapper.readValue(
-                    resource.getInputStream(),
-                    new TypeReference<>() {}
-            );
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to load TextMap metadata", e);
-        }
-    }
-
-    private Map<String, String> loadAssetMetadata() {
-        try {
-            ClassPathResource resource =
-                    new ClassPathResource("assets/.asset_metadata.json");
-
-            return objectMapper.readValue(
-                    resource.getInputStream(),
-                    new TypeReference<>() {}
-            );
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to load asset metadata", e);
+            log.error("  Failed to load data from {}: {}", config.filePath(), e.getMessage());
         }
     }
 
     //This be a recursive function that goes to the end and finds stuff
-    private void flattenAndSaveToRedis(JsonNode node, String currentPath, int[] count) {
+    private void flattenAndSaveToRedis(JsonNode node, String currentPath, int[] count, String sourceFile, Instant loadStart) {
         if (node.isObject()) {
             Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
             while (fields.hasNext()) {
                 Map.Entry<String, JsonNode> field = fields.next();
                 String newPath = currentPath + ":" + field.getKey();
-                flattenAndSaveToRedis(field.getValue(), newPath, count);
+                flattenAndSaveToRedis(field.getValue(), newPath, count, sourceFile, loadStart);
             }
         } else if (node.isArray()) {
             for (int i = 0; i < node.size(); i++) {
                 String newPath = currentPath + "[" + i + "]";
-                flattenAndSaveToRedis(node.get(i), newPath, count);
+                flattenAndSaveToRedis(node.get(i), newPath, count, sourceFile, loadStart);
             }
         } else if (node.isValueNode() && !node.isNull()) {
             redisTemplate.opsForValue().set(currentPath, node.asText());
             count[0]++;
+            if (count[0] % 10_000 == 0) {
+                Duration elapsed = Duration.between(loadStart, Instant.now());
+                log.info("    ... [{}] {} entries written so far (took {})", sourceFile, count[0], formatDuration(elapsed));
+            }
         }
     }
 
@@ -194,9 +222,11 @@ public class RedisDataLoaderService {
                     .get(redisHashKey, fileName);
 
             if (currentHash.equals(redisHash)) {
-                log.info("Skipping [{}]: already loaded", fileName);
+                log.info("  Skipping [{}]: already loaded (hash unchanged)", fileName);
                 return;
             }
+
+            log.info("  [{}] is new or changed (redis hash={}, current hash={}) - loading...", fileName, redisHash, currentHash);
 
             loadUniversalJsonToRedis(config);
 
@@ -207,16 +237,30 @@ public class RedisDataLoaderService {
             );
 
             log.info(
-                    "Updated version for [{}]",
+                    "  Updated stored version for [{}]",
                     fileName
             );
 
         } catch (Exception e) {
             log.error(
-                    "Failed processing {}",
+                    "  Failed processing {}",
                     fileName,
                     e
             );
+        }
+    }
+
+    private String formatDuration(Duration duration) {
+        long totalSeconds = duration.toSeconds();
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return String.format("%dh %dm %ds", hours, minutes, seconds);
+        } else if (minutes > 0) {
+            return String.format("%dm %ds", minutes, seconds);
+        } else {
+            return String.format("%d.%03ds", seconds, duration.toMillisPart());
         }
     }
 }

@@ -43,6 +43,7 @@ out/
 src/main/resources/application.properties
 /src/main/resources/textMaps/
 /src/main/resources/assets/
+/data/
 src/main/resources/assets/hsr.json
 src/main/resources/assets/relics.json
 src/main/resources/assets/ItemConfigRelic.json
