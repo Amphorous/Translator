@@ -65,7 +65,8 @@ if (isWindows) {
         pythonCommand = 'py'
     }
 } else {
-    pythonCommand = new File(projectDir, 'scripts/venv/bin/python3').absolutePath
+    def linuxVenv = new File(projectDir, 'scripts/venv/bin/python3')
+    pythonCommand = linuxVenv.exists() ? linuxVenv.absolutePath : 'python3'
 }
 
 tasks.register('syncTextMaps', Exec) {
