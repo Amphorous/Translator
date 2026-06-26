@@ -30,6 +30,11 @@ public class HSRController {
         return ResponseEntity.ok(honkaiTranslateService.translateRelicInfo(language, tid));
     }
 
+    @GetMapping("/relic-catalog/{language}")
+    public ResponseEntity<Map<String, Object>> getRelicCatalog(@PathVariable String language) {
+        return ResponseEntity.ok(honkaiTranslateService.getRelicCatalog(language));
+    }
+
     @GetMapping("/localization/getlist")
     public ResponseEntity<List<Map<String, Boolean>>> getLocalizationList() {
         Map<String, String> metadata = dataPaths.readTextMapMetadata();
