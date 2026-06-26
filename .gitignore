@@ -38,9 +38,7 @@ out/
 ### VS Code ###
 .vscode/
 
-/src/main/resources/application.properties
 /scripts/.venv/
-src/main/resources/application.properties
 /src/main/resources/textMaps/
 /src/main/resources/assets/
 /data/
