@@ -8,6 +8,7 @@ import org.hoyo.translator.loading.DataLoadingStatus;
 import org.hoyo.translator.loading.DataPaths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,16 @@ public class RedisDataLoaderService {
     private final TaskExecutor dataLoaderExecutor;
     private final DataPaths dataPaths;
     private final AssetFetchService assetFetchService;
+
+    // Owner token for this JVM's refresh lock - distinct per instance, so each
+    // instance only ever releases a lock it actually holds.
+    private final String lockOwnerId = UUID.randomUUID().toString();
+
+    @Value("${translator.data.refresh-lock-key:translator:refresh:lock}")
+    private String refreshLockKey;
+
+    @Value("${translator.data.refresh-lock-ttl-seconds:3600}")
+    private long refreshLockTtlSeconds;
 
     public RedisDataLoaderService(StringRedisTemplate redisTemplate, ObjectMapper objectMapper,
                                    DataLoadingStatus loadingStatus, TaskExecutor dataLoaderExecutor,
@@ -66,6 +77,19 @@ public class RedisDataLoaderService {
     public void refreshData() {
         if (!loadingStatus.tryStart()) {
             log.info("Redis data import already in progress, skipping this request.");
+            return;
+        }
+
+        // DataLoadingStatus's AtomicBoolean only guards against a second concurrent
+        // run on this same JVM. With multiple Translator instances sharing the same
+        // Redis (e.g. an extra instance on philia alongside orexis's), a Redis-level
+        // lock is needed too, otherwise both instances can run the full file-load
+        // loop at once on the same cron tick or on simultaneous startup.
+        Boolean acquired = redisTemplate.opsForValue()
+                .setIfAbsent(refreshLockKey, lockOwnerId, Duration.ofSeconds(refreshLockTtlSeconds));
+        if (acquired == null || !acquired) {
+            log.info("Another instance currently holds the refresh lock ({}), skipping this request.", refreshLockKey);
+            loadingStatus.markFinished(true, null);
             return;
         }
 
@@ -155,6 +179,18 @@ public class RedisDataLoaderService {
         } catch (Exception e) {
             log.error("Redis data import check failed", e);
             loadingStatus.markFinished(false, e.getMessage());
+        } finally {
+            releaseRefreshLockIfOwned();
+        }
+    }
+
+    /**
+     * Only deletes the lock if it's still ours - if our TTL already expired and
+     * another instance grabbed it, we must not delete their lock out from under them.
+     */
+    private void releaseRefreshLockIfOwned() {
+        if (lockOwnerId.equals(redisTemplate.opsForValue().get(refreshLockKey))) {
+            redisTemplate.delete(refreshLockKey);
         }
     }
 
