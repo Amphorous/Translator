@@ -12,6 +12,8 @@ import java.util.regex.Pattern;
 @Service
 public class HonkaiTranslateService {
 
+    public static final int MAX_BATCH_SIZE = 200;
+
     private final StringRedisTemplate redisTemplate;
     private final DataLoadingStatus loadingStatus;
 
@@ -26,6 +28,72 @@ public class HonkaiTranslateService {
             case "tw": language = "cht"; break;
         }
         return language.toUpperCase();
+    }
+
+    // hsr.json (loaded into Redis under the "hsr" prefix) keys its locales differently
+    // from the textMap system above - zh-cn/zh-tw/ja/ko instead of cn/tw/jp/kr - so this
+    // needs its own mapping rather than reusing resolveLanguage.
+    private String resolveAssetLocale(String language) {
+        return switch (language) {
+            case "cn" -> "zh-cn";
+            case "tw" -> "zh-tw";
+            case "jp" -> "ja";
+            case "kr" -> "ko";
+            default -> language;
+        };
+    }
+
+    // hsr.json mixes stat names in with unrelated glossary entries ("trailblazer",
+    // "su", ...) and thousands of numeric-hash-keyed character/item name strings under
+    // the same locale object. Stat keys are always PascalCase identifiers (BaseHP,
+    // CriticalChance, ElationDamageAddedRatio, ...), which cleanly distinguishes them
+    // from both without needing to hardcode/maintain the ~56-key list by hand.
+    private static final Pattern STAT_KEY_PATTERN = Pattern.compile("^[A-Z][A-Za-z]*$");
+
+    public Map<String, String> getStatNames(String language) {
+        String locale = resolveAssetLocale(language);
+        String prefix = "hsr:" + locale + ":";
+
+        Set<String> keys = redisTemplate.keys(prefix + "*");
+        Map<String, String> result = new LinkedHashMap<>();
+
+        if (keys != null) {
+            for (String key : keys) {
+                String statKey = key.substring(prefix.length());
+                if (!STAT_KEY_PATTERN.matcher(statKey).matches()) continue;
+
+                String value = redisTemplate.opsForValue().get(key);
+                if (value != null) {
+                    result.put(statKey, value);
+                }
+            }
+        }
+
+        return LoadingWarningUtil.withLoadingWarning(result, loadingStatus);
+    }
+
+    public Map<String, String> translateHash(String language, String hash) {
+        return translateHashes(language, List.of(hash));
+    }
+
+    // resolves any textmap hashes (avatar names, relic names, ...) to translated
+    // strings in one Redis round trip; response maps hash -> translation
+    public Map<String, String> translateHashes(String language, List<String> hashes) {
+        String lang = resolveLanguage(language);
+
+        List<String> distinctHashes = hashes.stream().distinct().toList();
+        List<String> keys = distinctHashes.stream()
+                .map(hash -> "textMap" + lang + ":" + hash)
+                .toList();
+        List<String> values = redisTemplate.opsForValue().multiGet(keys);
+
+        Map<String, String> result = new LinkedHashMap<>();
+        for (int i = 0; i < distinctHashes.size(); i++) {
+            String value = values != null ? values.get(i) : null;
+            result.put(distinctHashes.get(i), value != null ? value : "Translation Missing");
+        }
+
+        return LoadingWarningUtil.withLoadingWarning(result, loadingStatus);
     }
 
     public Map<String, String> translateRelicInfo(String language, String tid) {
