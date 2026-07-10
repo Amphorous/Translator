@@ -21,6 +21,21 @@ public class HSRController {
     private final HonkaiTranslateService honkaiTranslateService;
     private final DataPaths dataPaths;
 
+    // resolves a single textmap hash -> {hash: translation}
+    @GetMapping("/translate/{language}/{hash}")
+    public ResponseEntity<Map<String, String>> translateHash(@PathVariable String language, @PathVariable String hash) {
+        return ResponseEntity.ok(honkaiTranslateService.translateHash(language, hash));
+    }
+
+    // batch variant: body ["hash1", "hash2", ...] -> {hash1: translation, hash2: translation, ...}
+    @PostMapping("/translate/{language}")
+    public ResponseEntity<Map<String, String>> translateHashes(@PathVariable String language, @RequestBody List<String> hashes) {
+        if (hashes == null || hashes.isEmpty() || hashes.size() > HonkaiTranslateService.MAX_BATCH_SIZE) {
+            return ResponseEntity.badRequest().build();
+        }
+        return ResponseEntity.ok(honkaiTranslateService.translateHashes(language, hashes));
+    }
+
     @GetMapping("/relic-info/{language}/{tid}")
     public ResponseEntity<Map<String, String>> getRelicInfo(@PathVariable String language, @PathVariable String tid) {
         if (tid == null) {
@@ -33,6 +48,11 @@ public class HSRController {
     @GetMapping("/relic-catalog/{language}")
     public ResponseEntity<Map<String, Object>> getRelicCatalog(@PathVariable String language) {
         return ResponseEntity.ok(honkaiTranslateService.getRelicCatalog(language));
+    }
+
+    @GetMapping("/stat-names/{language}")
+    public ResponseEntity<Map<String, String>> getStatNames(@PathVariable String language) {
+        return ResponseEntity.ok(honkaiTranslateService.getStatNames(language));
     }
 
     @GetMapping("/localization/getlist")
