@@ -177,4 +177,36 @@ public class HonkaiTranslateService {
 
         return Map.of("sets", sets, "relics", relics);
     }
+
+    // Same scan-by-regex-then-resolve-hash approach as getRelicCatalog above,
+    // against avatar_config:{avatarId}:AvatarName:Hash (loaded from avatars.json
+    // by RedisDataLoaderService, same object-keyed-by-id shape as relics.json).
+    // Lets the frontend fuzzy-search characters by their localised name and
+    // resolve straight to an avatarId, without the user needing to already
+    // have a build record for that character loaded first.
+    public Map<String, Object> getAvatarCatalog(String language) {
+        language = resolveLanguage(language);
+
+        List<Map<String, String>> avatars = new ArrayList<>();
+
+        Set<String> avatarKeys = redisTemplate.keys("avatar_config:*:AvatarName:Hash");
+        Pattern avatarPattern = Pattern.compile("avatar_config:(\\d+):AvatarName:Hash");
+
+        if (avatarKeys != null) {
+            for (String key : avatarKeys) {
+                Matcher m = avatarPattern.matcher(key);
+                if (!m.matches()) continue;
+                String avatarId = m.group(1);
+                String hash = redisTemplate.opsForValue().get(key);
+                if (hash == null) continue;
+                String name = redisTemplate.opsForValue().get("textMap" + language + ":" + hash);
+                if (name == null) continue;
+                avatars.add(Map.of("avatarId", avatarId, "name", name));
+            }
+        }
+
+        avatars.sort(Comparator.comparing(a -> a.get("name")));
+
+        return Map.of("avatars", avatars);
+    }
 }

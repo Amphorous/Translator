@@ -104,7 +104,13 @@ public class RedisDataLoaderService {
             List<FileConfig> filesToLoad = new ArrayList<>(List.of(
                     new FileConfig("assets/hsr.json", "hsr", null),
                     new FileConfig("assets/relics.json", "relics", null),
-                    new FileConfig("assets/ItemConfigRelic.json", "relic_config", "ID")
+                    new FileConfig("assets/ItemConfigRelic.json", "relic_config", "ID"),
+                    // avatars.json is a plain object keyed by avatarId (not an array),
+                    // same shape as relics.json's top level — flattens to
+                    // avatar_config:{avatarId}:AvatarName:Hash etc., which
+                    // HonkaiTranslateService.getAvatarCatalog scans the same way
+                    // getRelicCatalog scans relics:Sets:*:Name.
+                    new FileConfig("assets/avatars.json", "avatar_config", null)
             ));
 
             try (Stream<Path> stream = Files.list(dataPaths.textMapsDir())) {
@@ -141,7 +147,7 @@ public class RedisDataLoaderService {
             Map<String, String> textMapHashes = dataPaths.readTextMapMetadata();
             Map<String, String> assetHashes = dataPaths.readAssetMetadata();
 
-            log.info("Found {} files to check ({} TextMap files)", filesToLoad.size(), filesToLoad.size() - 3);
+            log.info("Found {} files to check ({} TextMap files)", filesToLoad.size(), filesToLoad.size() - 4);
 
             int fileIndex = 0;
             for (FileConfig config : filesToLoad) {
