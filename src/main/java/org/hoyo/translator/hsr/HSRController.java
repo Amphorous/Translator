@@ -50,6 +50,11 @@ public class HSRController {
         return ResponseEntity.ok(honkaiTranslateService.getRelicCatalog(language));
     }
 
+    @GetMapping("/avatar-catalog/{language}")
+    public ResponseEntity<Map<String, Object>> getAvatarCatalog(@PathVariable String language) {
+        return ResponseEntity.ok(honkaiTranslateService.getAvatarCatalog(language));
+    }
+
     @GetMapping("/stat-names/{language}")
     public ResponseEntity<Map<String, String>> getStatNames(@PathVariable String language) {
         return ResponseEntity.ok(honkaiTranslateService.getStatNames(language));

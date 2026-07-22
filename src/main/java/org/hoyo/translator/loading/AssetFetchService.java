@@ -38,7 +38,8 @@ public class AssetFetchService {
 
     private static final Map<String, String> GITHUB_FILES = Map.of(
             "hsr.json", "https://raw.githubusercontent.com/EnkaNetwork/API-docs/master/store/hsr/hsr.json",
-            "relics.json", "https://raw.githubusercontent.com/EnkaNetwork/API-docs/master/store/hsr/relics.json"
+            "relics.json", "https://raw.githubusercontent.com/EnkaNetwork/API-docs/master/store/hsr/relics.json",
+            "avatars.json", "https://raw.githubusercontent.com/EnkaNetwork/API-docs/master/store/hsr/avatars.json"
     );
 
     private static final String GITLAB_PROJECT = "Dimbreath%2Fturnbasedgamedata";
