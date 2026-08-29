@@ -50,6 +50,14 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
+tasks.named('bootRun') {
+    // This machine's outbound IPv6 to raw.githubusercontent.com (dual-stack,
+    // unlike IPv4-only hosts) is blackholed, so Java's HttpClient hangs until
+    // its connect timeout fires in AssetFetchService.download(). Same fix as
+    // Celestia's build.gradle: forcing IPv4 skips the dead route.
+    jvmArgs = ['-Djava.net.preferIPv4Stack=true']
+}
+
 //THIS BE THE PART THAT DOWNLOADS THE FILES
 
 def isWindows = System.getProperty('os.name').toLowerCase().contains('windows')
